@@ -1,10 +1,10 @@
 # Simulation Code for "Transportability of Outcome Measurement Error Models: from Validation Studies to Intervention Trials"
 
-This repo contains all of the necessary code to run the simulations in my thesis paper on improving the transportability of measurement error structures using external validation data. 
+This repo contains all of the necessary code to run the simulations for the manuscript titled "Transportability of Outcome Measurement Error Models: from Validation Studies to Intervention Trials." The code is set up to run on a remote cluster (originally run on the JHPCE cluster at Johns Hopkins).
 
 ### Setup
 
-Before running the simulations on the JHPCE cluster, make sure you have all of the files from this repo's `code/` directory in this `simulation/` folder, along with the following sub-directories set up:
+Before running the simulations on the cluster, make sure you have all of the files from this repo's `code/` directory in this `simulation/` folder, along with the following sub-directories set up:
 
 - `pop_data/` (for the created population data files)
 - `sim_results/` (for the created simulation results)
@@ -31,7 +31,7 @@ The `config.R` file defines *all* of the parameters to run the simulations, incl
     - `g0`, `g1`, `g2` & `sigma2_z`: Parameters to simulate the true outcome Z
     - `a1`, `a2`, `a3`, `a4`, `a5`, `a6`: Parameters to simulate the mismeasured outcome Y (`a3`-`a6` are the relative magnitudes of the X coefficients)
 
-### Running the simulations on the JHPCE Cluster
+### Running the simulations on the JHPCE cluster
 
 1. Update and upload your `config.R` file to the cluster directory.
 2. Create the population data files (this also checks if the population data already exist, in which case they're not re-generated)
@@ -42,7 +42,7 @@ qsub -N mkpop -cwd -l mem_free=1G,h_vmem=1G mkpop.sh
 ```
 sh sim.sh
 ```
-4. Gather the simulation run times and combine the results across the 1000 runs (make sure to navigate to the directory after typing `qrsh`):
+4. Gather the simulation run times and combine the results across the 1000 runs (this is done in an active session. Make sure to navigate to the directory after typing `qrsh`):
 ```
 qrsh
 sh gather_results.sh
