@@ -198,6 +198,14 @@ get_mu = function(data_obj, s, weighting){
   
   dat$weights = ifelse(dat$S == 0, ps/(1-ps), 1)
   
+  ### Weight trimming test
+  mean_weights = dat %>% filter(S == 0) %>% summarise(mean(weights)) %>% pull()
+  
+  if(any(dat %>% filter(S == 0) %>% pull(weights) > mean_weights*10)){
+    quantile_97 = dat %>% filter(S == 0) %>% summarise(quantile(weights, .97)) %>% pull()
+    dat$weights[which(dat$S == 0)] = ifelse(dat$weights[which(dat$S == 0)] > quantile_97, quantile_97, dat$weights[which(dat$S == 0)])
+  }
+  
   mu = with(dat %>% filter(S == s, T == 0), weighted.mean(Y - Z,weights))
   
   return(mu)
@@ -225,14 +233,38 @@ get_results = function(data_obj, weighting){
 
   bias_mu0 = mu_v - mu_l
   
+  ### Calculate coverage:
+  d = data_obj$data
+  ps = weight_model(weighting, data_obj)
+  d$weights = ifelse(d$S == 0, ps/(1-ps), 1)
+  
+  ### Weight trimming
+  mean_weights = d %>% filter(S == 0) %>% summarise(mean(weights)) %>% pull()
+
+  if(any(d %>% filter(S == 0) %>% pull(weights) > mean_weights*10)){
+    quantile_97 = d %>% filter(S == 0) %>% summarise(quantile(weights, .97)) %>% pull()
+    d$weights[which(d$S == 0)] = ifelse(d$weights[which(d$S == 0)] > quantile_97, quantile_97, d$weights[which(d$S == 0)])
+  }
+  
+  d = d %>% filter(S == 0, T == 0)
+  
+  pct_wt_outliers = mean(with(d, weights > 10*mean(weights)))*100
+
+  se_mu_v = get_weighted_se(d$Y, d$Z, d$weights)
+  
+  #coverage_logical = coverage(mu_v, se_mu_v, mu_l)
+  
   results = data.frame(s_true = data_obj$s_true, 
                        weighting = weighting,
                        scale = data_obj$scale,
                        y_scale = data_obj$y_scale,
                        DoM = dom,
                        ASMD = ASMD,
-                       m_01_bias = bias_mu0, 
+                       m_01_bias = bias_mu0,
+                       #coverage = coverage_logical,
+                       pct_wt_outliers = pct_wt_outliers,
                        mu_v = mu_v,
+                       se_mu_v = se_mu_v,
                        mu_l = mu_l,
                        stringsAsFactors = FALSE)
   return(results)
@@ -267,6 +299,7 @@ run_pops = function(population, dat_params, n_samples){
       map_df(~run_samples(pop, dat_params, .)) %>% 
       group_by(s_true,weighting, scale,y_scale) %>% 
       summarise(m_01_bias = mean(m_01_bias),
+                coverage = mean(coverage),
                 mu_v = mean(mu_v),
                 mu_l = mean(mu_l),
                 DoM = mean(DoM),
@@ -280,23 +313,107 @@ run_pops = function(population, dat_params, n_samples){
 ##### PLOTTING FUNCTIONS #####
 plot_bias = function(data, s_model = NULL){
   p_dat = data %>% 
-    filter(weighting == "simple" & scale > 0 & y_scale == "scale[y] == 0.2") %>% 
+    filter(weighting == "simple" & scale > 0 & y_scale == "gamma[2] == 0.2") %>% 
     mutate(s_true = forcats::fct_reorder(s_true,DoM))
   
-  p = data %>% ungroup() %>% 
+  p = data %>% 
+    #filter(y_scale %in% c("gamma[2] == 0","gamma[2] == 0.4","gamma[2] == 0.8"),
+    #       s_true %in% c("S %~% x[1] + x[2] + x[3] + x[4]",
+    #                     "S %~% x[1] + x[2] + x[3] + x[4] + x[1]*x[3]",
+    #                      "S %~% x[1] + x[2] + x[3] + x[4] + x[4]^2",
+    #                     "S %~% x[1] + x[2] + x[3] + x[4] + x[3]*x[4]",
+    #                     "S %~% x[1] + x[2] + x[3] + x[4] + x[3]^2 + x[4]^2 + x[3]*x[4]")) %>% 
+    ungroup() %>% 
     mutate(s_true = forcats::fct_relevel(s_true, levels(p_dat$s_true))) %>% 
     ggplot() +
-    geom_line(aes(x = ASMD, y = abs(bias), col=weighting)) +
+    geom_line(aes(x = ASMD, y = abs(bias), linetype=weighting, col = weighting)) +
     facet_grid(y_scale ~ s_true, label = 'label_parsed') +
     labs(color = "Weighting Method",
          x = "ASMD of true selection probabilities",
-         y = expression(paste({'|Bias'}[mu[0]],'|'))) +
-    ggtitle(expression(paste('Absolute Bias of estimating ',mu[0], ' in the trial using validation data')))
+         y = expression(paste({'|Bias'}[hat(mu[0])],'|'))) +
+    ggtitle(expression(paste('Absolute Bias of estimating ',mu[0]^rct, ' using validation data'))) +
+    theme_bw() +
+    scale_colour_manual(name = "Weighting Method",
+                        labels = c("Weighted - Misspecified","Weighted - True","Unweighted"),
+                        values = c("red","dark green","blue")) +   
+    scale_linetype_manual(name = "Weighting Method",
+                       labels = c("Weighted - Misspecified","Weighted - True","Unweighted"),
+                       values = c(1,2,4))
+  return(p)
+}
+
+plot_coverage = function(data, s_model = NULL){
+  p_dat = data %>% 
+    filter(weighting == "simple" & scale > 0 & y_scale == "gamma[2] == 0.2") %>% 
+    mutate(s_true = forcats::fct_reorder(s_true,DoM))
+  
+  p = data %>% 
+    #filter(y_scale %in% c("gamma[2] == 0","gamma[2] == 0.4","gamma[2] == 0.8"),
+    #       s_true %in% c("S %~% x[1] + x[2] + x[3] + x[4]",
+    #                     "S %~% x[1] + x[2] + x[3] + x[4] + x[1]*x[3]",
+    #                      "S %~% x[1] + x[2] + x[3] + x[4] + x[4]^2",
+    #                     "S %~% x[1] + x[2] + x[3] + x[4] + x[3]*x[4]",
+    #                     "S %~% x[1] + x[2] + x[3] + x[4] + x[3]^2 + x[4]^2 + x[3]*x[4]")) %>% 
+    ungroup() %>% 
+    mutate(s_true = forcats::fct_relevel(s_true, levels(p_dat$s_true))) %>% 
+    ggplot() +
+    geom_line(aes(x = ASMD, y = coverage*100, linetype=weighting, col = weighting)) +
+    facet_grid(y_scale ~ s_true, label = 'label_parsed') +
+    labs(color = "Weighting Method",
+         x = "ASMD of true selection probabilities",
+         y = "Coverage (%)") +
+    ggtitle('Empirical Coverage of 95% CI') +
+    theme_bw() +
+    scale_colour_manual(name = "Weighting Method",
+                        labels = c("Weighted - Misspecified","Weighted - True","Unweighted"),
+                        values = c("red","dark green","blue")) +   
+    scale_linetype_manual(name = "Weighting Method",
+                          labels = c("Weighted - Misspecified","Weighted - True","Unweighted"),
+                          values = c(1,2,4))
+  return(p)
+}
+
+# to look at coverage across the 1000 simulation runs for each scenario:
+plot_coverage_lines = function(data, w, s, x_s, y_s){
+  weight_lab = ifelse(w == "unweighted","Unweighted",ifelse(
+    w == "simple","Weighted - Misspecified","Weighted - True"
+  ))
+  
+  x_limits = data %>% 
+    filter(s_true == s, scale == x_s, y_scale == y_s) %>% 
+    summarise(min_mu = min(mu_v - 1.96*se_mu_v),
+              max_mu = max(mu_v + 1.96*se_mu_v))
+  
+  d = data %>% 
+    filter(weighting == w, s_true == s, scale == x_s, y_scale == y_s) %>% 
+    arrange(desc(mu_v)) %>% 
+    mutate(id = row_number())
+  
+  d$test = coverage(d$mu_v, d$se_mu_v, mean(d$mu_l))
+  c = mean(d$test)
+  
+  p = d %>% 
+    ggplot(aes(x = as.factor(id), y = mu_v)) +
+    geom_errorbar(aes(ymin=as.numeric(mu_v-1.96*se_mu_v), ymax=as.numeric(mu_v+1.96*se_mu_v), colour = as.factor(test)), width=.1) +
+    #geom_point() + 
+    geom_hline(yintercept = mean(d$mu_l), color="light blue",linetype="dashed")+
+    theme_classic()+theme(text = element_text(family="Times New Roman"),
+                          axis.title.y=element_blank(),
+                          axis.text.y=element_blank(),
+                          axis.ticks.y=element_blank())+
+    labs(y = "mu_v 95% CI")+coord_flip() +
+    ylim(x_limits$min_mu, x_limits$max_mu) +
+    ggtitle(paste0("Empirical Coverage: ",c*100,"% (",weight_lab,")")) +
+    theme(legend.position = "none",
+          plot.title = element_text(size = 10)) +
+    scale_color_manual(breaks = c("0","1"),
+                       values=c("red", "black"))
+  
   return(p)
 }
 
 plot_bias_by_dom = function(data){
-  d1 = data %>% 
+  d1 = data %>%
     filter(weighting == "simple") %>% 
     dplyr::select(s_true, scale, y_scale, DoM)
   
@@ -316,8 +433,8 @@ plot_bias_by_dom = function(data){
     facet_grid(y_scale ~ scale, label = 'label_parsed') +
     labs(color = "Weighting Method",
          x = "DoM",
-         y = expression(paste({'|Bias'}[mu[0]],'|'))) +
-    ggtitle(expression(paste('Absolute Bias of estimating ',mu[0], ' in the trial using validation data')))
+         y = expression(paste({'|Bias'}[hat(mu[0])],'|'))) +
+    ggtitle(expression(paste('Absolute Bias of estimating ',mu[0]^rct, ' using validation data')))
   return(p)
 }
 

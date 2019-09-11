@@ -17,6 +17,30 @@ asmd = function(x1, x2){
   return(abs((mean(x1)-mean(x2))/pooled_sd))
 }
 
+### Calculate coverage
+get_weighted_se = function(Y, Z, weights){
+  n = length(Y)
+  
+  X = cbind(Y,Z)
+  W = as.vector(weights)
+  
+  vcov = cov.wt(X, W)$cov
+  
+  vpooled = vcov[1,1] + vcov[2,2] - 2*vcov[1,2]
+  se = sqrt(vpooled/n)
+  
+  return(se)
+}
+
+coverage = function(estimate, se, truth){
+  CI_lower = estimate - 1.96*se
+  CI_upper = estimate + 1.96*se
+  
+  covered = ifelse(truth >= CI_lower & truth <= CI_upper, 1, 0)
+  
+  return(covered)
+}
+
 ### Function from github help to parse axis labels as equations:
 new_parse_format <- function(text) {
   text <- as.character(text)
